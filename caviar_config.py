@@ -72,3 +72,22 @@ is_sync = True
 is_rescue_mission = True
 simulation_time_step = 0.5
 save_multimodal = False
+
+# AirSim connection and startup configuration
+#
+# Default setup for mixed OS execution:
+# - AirSim (Unreal environment) runs manually on Windows host
+# - CAVIAR Python orchestration runs in WSL2 (Ubuntu)
+#
+# "auto" tries to resolve the Windows host IP from /etc/resolv.conf (WSL2 default).
+airsim_host = "auto"
+airsim_port = 41451
+
+# Keep this as False when AirSim is started manually on Windows.
+# Set to True only for all-Linux setups that should auto-launch Unreal.
+start_airsim_from_simulate = False
+
+# Linux AirSim executable path (used only when start_airsim_from_simulate=True)
+airsim_linux_executable = (
+    "3d/central_park/LinuxNoEditor/central_park/Binaries/Linux/central_park-Linux-DebugGame"
+)

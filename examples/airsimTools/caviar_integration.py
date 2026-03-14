@@ -19,6 +19,23 @@ from calc_rescues import get_time_for_rescue
 rng = np.random.default_rng(caviar_config.random_seed)
 
 
+def resolve_airsim_host(host_setting):
+    if host_setting != "auto":
+        return host_setting
+
+    try:
+        with open("/etc/resolv.conf", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("nameserver"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1]
+    except OSError:
+        pass
+
+    return "127.0.0.1"
+
+
 def convertPositionFromAirSimToSionna(x, y, z):
     # Sionna coordinates for AirSim PlayerStart position (AirSim's origin point)
     # Central Park offset
@@ -112,7 +129,11 @@ with NATSClient() as natsclient:
     except OSError as error:
         print(error)
 
-    client = caviar_tools.airsim_connect(ip="127.0.0.1")
+    airsim_host = resolve_airsim_host(caviar_config.airsim_host)
+    print(f"Connecting to AirSim at {airsim_host}:{caviar_config.airsim_port}")
+    client = caviar_tools.airsim_connect(
+        ip=airsim_host, port=caviar_config.airsim_port
+    )
 
     #  Socket to talk to server
     natsclient.connect()

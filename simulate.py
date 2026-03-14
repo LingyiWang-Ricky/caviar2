@@ -6,6 +6,14 @@ import sys
 from pynats import NATSClient
 import json
 
+import caviar_config
+
+
+nats_simu = None
+airsim_simu = None
+mobility_simu = None
+sionna_simu = None
+
 
 def signal_handler(sig, frame):
     global key
@@ -39,7 +47,7 @@ class runAirSim(threading.Thread):
         global airsim_simu
         airsim_simu = subprocess.Popen(
             [
-                "3d/central_park/LinuxNoEditor/central_park/Binaries/Linux/central_park-Linux-DebugGame",
+                caviar_config.airsim_linux_executable,
                 "-WINDOWED",
                 "-ResX=640",
                 "-ResY=480",
@@ -77,40 +85,59 @@ class runSionna(threading.Thread):
         )
 
 
+def terminate_process(process, process_name):
+    if process is None:
+        return
+
+    if process.poll() is not None:
+        return
+
+    print(f"Stopping {process_name}...")
+    process.send_signal(signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        print(f"{process_name} did not stop in time. Killing it.")
+        process.kill()
+        process.wait()
+
+
+def abort_simulation():
+    print("The program was terminated manually!")
+    time.sleep(1)
+
+    if caviar_config.start_airsim_from_simulate:
+        terminate_process(airsim_simu, "AirSim")
+
+    terminate_process(nats_simu, "NATS")
+    terminate_process(mobility_simu, "Mobility")
+    terminate_process(sionna_simu, "Sionna")
+    print("------------------------------------------> END")
+
+
 if __name__ == "__main__":
     orchestrator_thread = runNatsServer()
-    threeD_thread = runAirSim()
     mobility_thread = runMobility()
     communications_thread = runSionna()
 
     try:
         orch_return = orchestrator_thread.start()
-        threeD_thread.start()
-        time.sleep(2)
+
+        if caviar_config.start_airsim_from_simulate:
+            threeD_thread = runAirSim()
+            threeD_thread.start()
+            time.sleep(2)
+        else:
+            print(
+                "-----------> Skipping AirSim launch in simulate.py "
+                "(start it manually on Windows)."
+            )
+
         mobility_thread.start()
         time.sleep(8)
         communications_thread.start()
     except Exception as e:
         print(f"Error: {str(e)}")
-
-    def abort_simulation():
-        print("The program was terminated manually!")
-        time.sleep(1)
-        airsim_simu.send_signal(signal.SIGTERM)
-        time.sleep(1)
-        airsim_simu.send_signal(signal.SIGTERM)
-        time.sleep(1)
-        airsim_simu.send_signal(signal.SIGTERM)
-        time.sleep(1)
-        nats_simu.send_signal(signal.SIGTERM)
-        mobility_simu.send_signal(signal.SIGTERM)
-        sionna_simu.send_signal(signal.SIGTERM)
-        airsim_simu.wait()
-        nats_simu.wait()
-        mobility_simu.wait()
-        sionna_simu.wait()
-        print("------------------------------------------> END")
-        sys.exit(0)
 
     with NATSClient() as natsclient:
         natsclient.connect()
