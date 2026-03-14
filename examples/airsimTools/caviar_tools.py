@@ -10,8 +10,8 @@ sys.path.append("./")
 import caviar_config
 
 
-def airsim_connect(ip):
-    client = airsim.MultirotorClient(ip)
+def airsim_connect(ip, port=41451):
+    client = airsim.MultirotorClient(ip=ip, port=port)
     client.confirmConnection()
     return client
 
