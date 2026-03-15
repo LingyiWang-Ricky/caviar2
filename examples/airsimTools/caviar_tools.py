@@ -360,6 +360,26 @@ def linecount(eps):
     return count
 
 
+
+
+def addPedestriansOnWaypoints(client, path_list):
+    if len(caviar_config.pedestrians) > len(path_list):
+        print(
+            "The number of pedestrian objects should be lower than the number of waypoints"
+        )
+        return
+
+    for i in range(len(caviar_config.pedestrians)):
+        client.simSetObjectPose(
+            caviar_config.pedestrians[i],
+            airsim.Pose(
+                airsim.Vector3r(float(path_list[i + 1][0]), float(path_list[i + 1][1]), float(135.81)),
+                airsim.to_quaternion(0, 0, 0),
+            ),
+            True,
+        )
+        client.simSetObjectScale(caviar_config.pedestrians[i], airsim.Vector3r(3, 3, 3))
+
 def addPedestriansOnPath(client, path):
     path_list = []
 
