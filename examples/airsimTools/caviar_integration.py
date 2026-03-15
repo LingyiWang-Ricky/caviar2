@@ -342,20 +342,7 @@ with NATSClient() as natsclient:
                                 rescue_steps = int(rescue_steps_raw) + 1
                         # No one to rescue. Must go to the next waypoint
                         else:
-                            actualWaypoint = actualWaypoint + 1
-                            caviar_tools.move_to_point(
-                                client,
-                                uav,
-                                path_list[actualWaypoint][0],
-                                path_list[actualWaypoint][1],
-                                path_list[actualWaypoint][2],
-                            )
-
-                            reached_waypoint = False
-
-                            print(actualWaypoint)
-
-                            if actualWaypoint == (len(path_list) - 4):
+                            if actualWaypoint >= (len(path_list) - 1):
                                 client.simPause(False)
                                 caviar_tools.airsim_land_all(client)
                                 isFinished = True
@@ -366,6 +353,19 @@ with NATSClient() as natsclient:
                                     + str(time.time() - initial_time)
                                     + "s"
                                 )
+                            else:
+                                actualWaypoint = actualWaypoint + 1
+                                caviar_tools.move_to_point(
+                                    client,
+                                    uav,
+                                    path_list[actualWaypoint][0],
+                                    path_list[actualWaypoint][1],
+                                    path_list[actualWaypoint][2],
+                                )
+
+                                reached_waypoint = False
+
+                                print(actualWaypoint)
                     # Continues the rescue
                     else:
                         rescue_steps = rescue_steps - 1

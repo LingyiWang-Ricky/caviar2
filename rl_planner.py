@@ -14,94 +14,118 @@ ALGORITHMS = {
 }
 
 
-class WaypointSearchEnv(gym.Env):
-    """Waypoint search environment for training a trajectory planning policy."""
+class DirectionDistanceEnv(gym.Env):
+    """RL env where actions choose flight direction + distance step."""
 
     metadata = {"render_modes": []}
 
     def __init__(
         self,
-        waypoint_array,
+        initial_position,
         max_steps,
-        pedestrian_prob=0.35,
-        distance_penalty=0.002,
+        action_distances,
+        n_directions=8,
+        area_limit=400.0,
         revisit_penalty=0.25,
+        step_distance_penalty=0.002,
         pedestrian_reward=1.0,
+        pedestrian_prob=0.35,
         seed=0,
     ):
         super().__init__()
-        self.waypoint_array = waypoint_array
-        self.n_waypoints = waypoint_array.shape[0]
-        self.max_steps = max_steps
-        self.pedestrian_prob = pedestrian_prob
-        self.distance_penalty = distance_penalty
-        self.revisit_penalty = revisit_penalty
-        self.pedestrian_reward = pedestrian_reward
+        self.initial_position = np.asarray(initial_position, dtype=np.float32)
+        self.max_steps = int(max_steps)
+        self.action_distances = np.asarray(action_distances, dtype=np.float32)
+        self.n_directions = int(n_directions)
+        self.area_limit = float(area_limit)
+        self.revisit_penalty = float(revisit_penalty)
+        self.step_distance_penalty = float(step_distance_penalty)
+        self.pedestrian_reward = float(pedestrian_reward)
+        self.pedestrian_prob = float(pedestrian_prob)
         self.rng = np.random.default_rng(seed)
 
-        self.action_space = spaces.Discrete(self.n_waypoints)
-        obs_dim = 2 + self.n_waypoints * 2
+        self.n_actions = self.n_directions * len(self.action_distances)
+        self.action_space = spaces.Discrete(self.n_actions)
+        # [x_norm, y_norm, z_norm, step_ratio]
         self.observation_space = spaces.Box(
-            low=0.0,
+            low=-1.0,
             high=1.0,
-            shape=(obs_dim,),
+            shape=(4,),
             dtype=np.float32,
         )
 
-        self.current_idx = 0
+        self.position = self.initial_position.copy()
         self.steps = 0
-        self.visited = np.zeros(self.n_waypoints, dtype=np.float32)
-        self.pedestrians = np.zeros(self.n_waypoints, dtype=np.float32)
-
-    def _distance_norm(self, from_idx, to_idx):
-        distance = np.linalg.norm(
-            self.waypoint_array[from_idx] - self.waypoint_array[to_idx], ord=2
-        )
-        return float(distance / (distance + 1.0))
+        self.visited_cells = set()
+        self.hotspots = np.zeros((0, 2), dtype=np.float32)
 
     def _obs(self):
-        current = np.array(
-            [self.current_idx / max(1, self.n_waypoints - 1)], dtype=np.float32
+        delta = self.position - self.initial_position
+        return np.array(
+            [
+                float(np.clip(delta[0] / self.area_limit, -1.0, 1.0)),
+                float(np.clip(delta[1] / self.area_limit, -1.0, 1.0)),
+                float(np.clip(delta[2] / max(1.0, self.area_limit), -1.0, 1.0)),
+                float(self.steps / max(1, self.max_steps)),
+            ],
+            dtype=np.float32,
         )
-        budget = np.array([self.steps / max(1, self.max_steps)], dtype=np.float32)
-        return np.concatenate((current, budget, self.visited, self.pedestrians)).astype(
-            np.float32
-        )
+
+    def _decode_action(self, action):
+        direction_idx = int(action) % self.n_directions
+        distance_idx = int(action) // self.n_directions
+        theta = 2.0 * np.pi * direction_idx / self.n_directions
+        step_len = float(self.action_distances[distance_idx])
+        dx = step_len * np.cos(theta)
+        dy = step_len * np.sin(theta)
+        return dx, dy, step_len
+
+    def _cell(self, pos):
+        return (int(np.round(pos[0] / 10.0)), int(np.round(pos[1] / 10.0)))
+
+    def _hotspot_reward(self, pos_xy):
+        if len(self.hotspots) == 0:
+            return 0.0
+        dists = np.linalg.norm(self.hotspots - pos_xy[None, :], axis=1)
+        closest = float(np.min(dists))
+        detect_prob = self.pedestrian_prob * np.exp(-(closest**2) / (2 * (35.0**2)))
+        return self.pedestrian_reward if self.rng.random() < detect_prob else 0.0
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         if seed is not None:
             self.rng = np.random.default_rng(seed)
 
-        self.current_idx = 0
+        self.position = self.initial_position.copy()
         self.steps = 0
-        self.visited[:] = 0
-        self.visited[0] = 1
-        self.pedestrians = (
-            self.rng.random(self.n_waypoints) < self.pedestrian_prob
-        ).astype(np.float32)
-        self.pedestrians[0] = 0
+        self.visited_cells = {self._cell(self.position)}
+
+        n_hotspots = max(3, self.n_directions // 2)
+        angles = self.rng.uniform(0.0, 2.0 * np.pi, size=n_hotspots)
+        radii = self.rng.uniform(20.0, self.area_limit * 0.7, size=n_hotspots)
+        hx = self.initial_position[0] + radii * np.cos(angles)
+        hy = self.initial_position[1] + radii * np.sin(angles)
+        self.hotspots = np.stack([hx, hy], axis=1).astype(np.float32)
+
         return self._obs(), {}
 
     def step(self, action):
-        reward = 0.0
-        done = False
-        truncated = False
+        dx, dy, step_len = self._decode_action(action)
+        self.position[0] += dx
+        self.position[1] += dy
 
-        if self.visited[action] == 1:
+        reward = self._hotspot_reward(self.position[:2])
+        reward -= self.step_distance_penalty * step_len
+
+        cell = self._cell(self.position)
+        if cell in self.visited_cells:
             reward -= self.revisit_penalty
         else:
-            reward += self.pedestrian_reward * float(self.pedestrians[action])
-            reward -= self.distance_penalty * self._distance_norm(self.current_idx, action)
-            self.visited[action] = 1
+            self.visited_cells.add(cell)
 
-        self.current_idx = int(action)
         self.steps += 1
-
-        if self.steps >= self.max_steps or np.all(self.visited == 1):
-            done = True
-
-        return self._obs(), float(reward), done, truncated, {}
+        done = self.steps >= self.max_steps
+        return self._obs(), float(reward), bool(done), False, {}
 
 
 def _build_model(algorithm, env, random_seed, kwargs):
@@ -110,58 +134,38 @@ def _build_model(algorithm, env, random_seed, kwargs):
         raise ValueError(
             f"Unsupported rl_algorithm '{algorithm}'. Available: {list(ALGORITHMS)}"
         )
-
-    model_cls = ALGORITHMS[algo]
-    return model_cls("MlpPolicy", env, seed=random_seed, verbose=0, **kwargs)
-
-
-def generate_candidate_waypoints(cfg):
-    """Generate waypoint candidates (no path*.csv required)."""
-    x0, y0, z0 = getattr(cfg, "rl_initial_position", (-320.34, -206.58, 128.0))
-    step = float(getattr(cfg, "rl_waypoint_spacing", 40.0))
-    rings = int(getattr(cfg, "rl_waypoint_rings", 2))
-
-    candidates = [[float(x0), float(y0), float(z0)]]
-    for r in range(1, rings + 1):
-        radius = r * step
-        for angle in [0, 45, 90, 135, 180, 225, 270, 315]:
-            rad = np.deg2rad(angle)
-            x = x0 + radius * np.cos(rad)
-            y = y0 + radius * np.sin(rad)
-            candidates.append([float(x), float(y), float(z0)])
-
-    max_points = int(getattr(cfg, "rl_max_candidate_waypoints", len(candidates)))
-    return candidates[:max_points]
+    return ALGORITHMS[algo]("MlpPolicy", env, seed=random_seed, verbose=0, **kwargs)
 
 
 def _find_existing_model_path(model_dir, model_name):
-    best_path = os.path.join(model_dir, f"{model_name}_best.zip")
-    final_path = os.path.join(model_dir, f"{model_name}_final.zip")
-    base_path = os.path.join(model_dir, f"{model_name}.zip")
-
-    if os.path.exists(best_path):
-        return best_path
-    if os.path.exists(final_path):
-        return final_path
-    if os.path.exists(base_path):
-        return base_path
+    for path in (
+        os.path.join(model_dir, f"{model_name}_best.zip"),
+        os.path.join(model_dir, f"{model_name}_final.zip"),
+        os.path.join(model_dir, f"{model_name}.zip"),
+    ):
+        if os.path.exists(path):
+            return path
     return None
 
 
-def train_or_load_model(waypoints, cfg):
-    max_steps = min(
-        len(waypoints) - 1,
-        int(getattr(cfg, "rl_planner_max_steps", len(waypoints) - 1)),
-    )
-    env = WaypointSearchEnv(
-        waypoint_array=np.asarray(waypoints, dtype=np.float32),
-        max_steps=max_steps,
-        pedestrian_prob=float(getattr(cfg, "rl_planner_pedestrian_probability", 0.35)),
-        distance_penalty=float(getattr(cfg, "rl_planner_distance_penalty", 0.002)),
+def _build_env(cfg, seed_offset=0):
+    action_distances = getattr(cfg, "rl_action_distances", (20.0, 40.0, 60.0))
+    return DirectionDistanceEnv(
+        initial_position=getattr(cfg, "rl_initial_position", (-320.34, -206.58, 128.0)),
+        max_steps=int(getattr(cfg, "rl_planner_max_steps", 7)),
+        action_distances=action_distances,
+        n_directions=int(getattr(cfg, "rl_action_directions", 8)),
+        area_limit=float(getattr(cfg, "rl_area_limit", 400.0)),
         revisit_penalty=float(getattr(cfg, "rl_planner_revisit_penalty", 0.25)),
+        step_distance_penalty=float(getattr(cfg, "rl_planner_distance_penalty", 0.002)),
         pedestrian_reward=float(getattr(cfg, "rl_planner_pedestrian_reward", 1.0)),
-        seed=int(getattr(cfg, "random_seed", 1)),
+        pedestrian_prob=float(getattr(cfg, "rl_planner_pedestrian_probability", 0.35)),
+        seed=int(getattr(cfg, "random_seed", 1)) + seed_offset,
     )
+
+
+def train_or_load_model(cfg):
+    env = _build_env(cfg)
 
     model_dir = getattr(cfg, "rl_model_dir", "./trained_models")
     model_name = getattr(cfg, "rl_model_name", "trajectory_planner")
@@ -174,10 +178,10 @@ def train_or_load_model(waypoints, cfg):
     os.makedirs(model_dir, exist_ok=True)
 
     if not force_retrain:
-        existing_path = _find_existing_model_path(model_dir, model_name)
-        if existing_path is not None:
+        existing = _find_existing_model_path(model_dir, model_name)
+        if existing is not None:
             model_cls = ALGORITHMS[getattr(cfg, "rl_algorithm", "PPO").upper()]
-            return model_cls.load(existing_path, env=env), env, existing_path
+            return model_cls.load(existing, env=env), env, existing
 
     model = _build_model(
         getattr(cfg, "rl_algorithm", "PPO"),
@@ -189,16 +193,7 @@ def train_or_load_model(waypoints, cfg):
         },
     )
 
-    eval_env = WaypointSearchEnv(
-        waypoint_array=np.asarray(waypoints, dtype=np.float32),
-        max_steps=max_steps,
-        pedestrian_prob=float(getattr(cfg, "rl_planner_pedestrian_probability", 0.35)),
-        distance_penalty=float(getattr(cfg, "rl_planner_distance_penalty", 0.002)),
-        revisit_penalty=float(getattr(cfg, "rl_planner_revisit_penalty", 0.25)),
-        pedestrian_reward=float(getattr(cfg, "rl_planner_pedestrian_reward", 1.0)),
-        seed=int(getattr(cfg, "random_seed", 1)) + 1000,
-    )
-
+    eval_env = _build_env(cfg, seed_offset=1000)
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=model_dir,
@@ -210,56 +205,31 @@ def train_or_load_model(waypoints, cfg):
 
     model.learn(total_timesteps=total_timesteps, callback=eval_callback)
 
-    best_model_temp = os.path.join(model_dir, "best_model.zip")
-    named_best_path = os.path.join(model_dir, f"{model_name}_best.zip")
-    named_final_path = os.path.join(model_dir, f"{model_name}_final")
-
-    if os.path.exists(best_model_temp):
-        shutil.copyfile(best_model_temp, named_best_path)
-
+    best_tmp = os.path.join(model_dir, "best_model.zip")
+    named_best = os.path.join(model_dir, f"{model_name}_best.zip")
+    final_prefix = os.path.join(model_dir, f"{model_name}_final")
+    if os.path.exists(best_tmp):
+        shutil.copyfile(best_tmp, named_best)
     if save_final:
-        model.save(named_final_path)
+        model.save(final_prefix)
 
     model_path = _find_existing_model_path(model_dir, model_name)
     if model_path is None:
-        model_path = named_final_path + ".zip"
-
+        model_path = final_prefix + ".zip"
     return model, env, model_path
 
 
 def build_rl_trajectory(cfg):
-    """Train (or load) an RL model and return a planned trajectory."""
-    path_list = generate_candidate_waypoints(cfg)
-    if len(path_list) <= 2:
-        return path_list, None
-
-    model, env, model_file = train_or_load_model(path_list, cfg)
+    """Train/load model and generate absolute positions from direction+distance actions."""
+    model, env, model_file = train_or_load_model(cfg)
 
     obs, _ = env.reset(seed=int(getattr(cfg, "random_seed", 1)))
-    chosen_actions = []
+    path_list = [env.position.copy().tolist()]
     for _ in range(env.max_steps):
         action, _ = model.predict(obs, deterministic=True)
-        action = int(action)
-
-        if action == 0 or action in chosen_actions:
-            unvisited = np.where(env.visited == 0)[0]
-            unvisited = [
-                int(x)
-                for x in unvisited
-                if int(x) != 0 and int(x) not in chosen_actions
-            ]
-            if not unvisited:
-                break
-            action = unvisited[0]
-
-        obs, _, done, _, _ = env.step(action)
-        if action > 0 and action not in chosen_actions:
-            chosen_actions.append(action)
+        obs, _, done, _, _ = env.step(int(action))
+        path_list.append(env.position.copy().tolist())
         if done:
             break
 
-    remaining = [idx for idx in range(1, len(path_list)) if idx not in chosen_actions]
-    ordered = [0] + chosen_actions + remaining
-    final_path = [path_list[idx] for idx in ordered]
-
-    return final_path, model_file
+    return path_list, model_file

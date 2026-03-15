@@ -155,6 +155,10 @@ Trajectory planning is now RL-driven by default (no `path*.csv` is required for 
    - `rl_save_final_model = True/False` to save model at training completion
    - `rl_eval_freq` and `rl_eval_episodes` for periodic evaluation; best model is saved only when evaluation performance improves
 
-4. Configure candidate trajectory generation (`rl_initial_position`, `rl_waypoint_spacing`, `rl_waypoint_rings`, `rl_max_candidate_waypoints`).
+4. Configure trajectory action space and initial state:
 
-The reward is shaped to prioritize finding more pedestrians, while penalizing revisits and unnecessary detours.
+   - `rl_initial_position`
+   - `rl_action_directions` and `rl_action_distances` (each action selects a direction + distance step)
+   - `rl_area_limit` and `rl_planner_max_steps`
+
+The reward is shaped to prioritize finding more pedestrians, while penalizing revisits and unnecessary detours. The generated trajectory is built incrementally as: current position + (direction, distance) action at each step.

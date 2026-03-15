@@ -88,14 +88,14 @@ rl_save_final_model = True
 rl_eval_freq = 1000
 rl_eval_episodes = 5
 
-# Candidate waypoint generation (no CSV input required)
+# Direction-distance action configuration (no CSV input required)
 rl_initial_position = (-320.34, -206.58, 128.0)
-rl_waypoint_spacing = 40.0
-rl_waypoint_rings = 2
-rl_max_candidate_waypoints = 12
+rl_action_directions = 8
+rl_action_distances = (20.0, 40.0, 60.0)
+rl_area_limit = 400.0
 
 # Reward shaping
-rl_planner_max_steps = 7
+rl_planner_max_steps = 12
 rl_planner_pedestrian_probability = 0.35
 rl_planner_pedestrian_reward = 1.0
 rl_planner_distance_penalty = 0.002
