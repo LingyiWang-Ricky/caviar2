@@ -73,6 +73,34 @@ is_rescue_mission = True
 simulation_time_step = 0.5
 save_multimodal = False
 
+# RL trajectory planner (Stable-Baselines3)
+# RL planning is mandatory: mission waypoints are generated and optimized without path*.csv.
+rl_algorithm = "PPO"  # PPO | A2C | DQN
+rl_total_timesteps = 5000
+rl_learning_rate = 3e-4
+rl_gamma = 0.99
+rl_force_retrain = True
+rl_model_dir = "./trained_models"
+rl_model_name = "trajectory_planner"
+rl_save_final_model = True
+
+# Save strategy: evaluate periodically and save best only when performance improves.
+rl_eval_freq = 1000
+rl_eval_episodes = 5
+
+# Candidate waypoint generation (no CSV input required)
+rl_initial_position = (-320.34, -206.58, 128.0)
+rl_waypoint_spacing = 40.0
+rl_waypoint_rings = 2
+rl_max_candidate_waypoints = 12
+
+# Reward shaping
+rl_planner_max_steps = 7
+rl_planner_pedestrian_probability = 0.35
+rl_planner_pedestrian_reward = 1.0
+rl_planner_distance_penalty = 0.002
+rl_planner_revisit_penalty = 0.25
+
 # AirSim connection and startup configuration
 #
 # Default setup for mixed OS execution:

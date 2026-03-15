@@ -13,3 +13,5 @@ numpy
 torch
 typing-extensions
 pycocotools
+stable-baselines3>=2.3.0
+gymnasium>=0.29.1
