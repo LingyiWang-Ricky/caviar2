@@ -19,10 +19,27 @@ from calc_rescues import get_time_for_rescue
 rng = np.random.default_rng(caviar_config.random_seed)
 
 
+def resolve_airsim_host(host_setting):
+    if host_setting != "auto":
+        return host_setting
+
+    try:
+        with open("/etc/resolv.conf", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("nameserver"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1]
+    except OSError:
+        pass
+
+    return "127.0.0.1"
+
+
 def convertPositionFromAirSimToSionna(x, y, z):
     # Sionna coordinates for AirSim PlayerStart position (AirSim's origin point)
-    # Central Park offset
-    offset = {"x": 23.34, "y": -3.42, "z": 137.23}
+    # Configurable per map in caviar_config.py
+    offset = caviar_config.sionna_origin_offset
     return [offset["x"] + x, offset["y"] - y, offset["z"] - z]
 
 
@@ -112,7 +129,17 @@ with NATSClient() as natsclient:
     except OSError as error:
         print(error)
 
-    client = caviar_tools.airsim_connect(ip="127.0.0.1")
+    airsim_host = resolve_airsim_host(caviar_config.airsim_host)
+    print(
+        f"Trying AirSim RPC at {airsim_host}:{caviar_config.airsim_port} "
+        f"(timeout={caviar_config.airsim_connection_timeout_s}s)"
+    )
+    client = caviar_tools.airsim_connect(
+        ip=airsim_host,
+        port=caviar_config.airsim_port,
+        timeout_s=caviar_config.airsim_connection_timeout_s,
+    )
+    print(f"Connected to AirSim RPC at {airsim_host}:{caviar_config.airsim_port}")
 
     #  Socket to talk to server
     natsclient.connect()
@@ -154,9 +181,12 @@ with NATSClient() as natsclient:
         # Delay between episodes to avoid crashs
         time.sleep(1)
 
-        caviar_tools.addPedestriansOnPath(
-            client, os.path.join(trajectories_files, "path" + str(episode) + ".csv")
-        )
+        if caviar_config.enable_pedestrians:
+            caviar_tools.addPedestriansOnPath(
+                client, os.path.join(trajectories_files, "path" + str(episode) + ".csv")
+            )
+        else:
+            print("Skipping pedestrian placement (enable_pedestrians=False)")
 
         # Reset the AirSim simulation
         caviar_tools.airsim_reset(client)
@@ -261,13 +291,14 @@ with NATSClient() as natsclient:
                         rescue_time = get_time_for_rescue(current_throughput * 1e9)
                         throughputs_during_rescue.append(current_throughput)
                         times_waited_during_rescue.append(rescue_time)
-                        rescue_state = client.simDestroyObject(
-                            caviar_config.pedestrians[actualWaypoint - 1]
-                        )
-                        if rescue_state == False:
-                            client.simDestroyObject(
-                                caviar_config.pedestrians[actualWaypoint]
+                        if caviar_config.enable_pedestrians:
+                            rescue_state = client.simDestroyObject(
+                                caviar_config.pedestrians[actualWaypoint - 1]
                             )
+                            if rescue_state == False:
+                                client.simDestroyObject(
+                                    caviar_config.pedestrians[actualWaypoint]
+                                )
                         print(f"> Rescue will take: {rescue_time} sec.")
                         rescued_targets = rescued_targets + 1
                         simu_time_of_rescue.append(

@@ -10,10 +10,28 @@ sys.path.append("./")
 import caviar_config
 
 
-def airsim_connect(ip):
-    client = airsim.MultirotorClient(ip)
-    client.confirmConnection()
-    return client
+def airsim_connect(ip, port=41451, timeout_s=20):
+    client = airsim.MultirotorClient(ip=ip, port=port)
+
+    start_time = time.time()
+    last_error = None
+    while time.time() - start_time < timeout_s:
+        try:
+            if client.ping():
+                return client
+        except Exception as exc:
+            last_error = exc
+        time.sleep(0.5)
+
+    hint = (
+        f"Unable to reach AirSim RPC at {ip}:{port} within {timeout_s}s. "
+        "For WSL2 + Windows mode, make sure AirSim is already running on Windows, "
+        "Windows firewall allows inbound TCP 41451, and AirSim is bound to an address "
+        "reachable from WSL2 (for example via LocalHostIp in settings)."
+    )
+    if last_error is not None:
+        raise RuntimeError(f"{hint} Last error: {last_error}")
+    raise RuntimeError(hint)
 
 
 def airsim_moveToInitialPosition(client):
@@ -96,7 +114,7 @@ def positions_csv(user_id, episode):
 
 
 def move_to_point(client, uav, x, y, z, speed=5):
-    client.enableApiControl(True)
+    client.enableApiControl(True, uav)
     client.moveToPositionAsync(
         x,
         y,
@@ -368,7 +386,9 @@ def addPedestriansOnPath(client, path):
         csv_reader.__next__()
         for column in csv_reader:
             path_list.append(
-                airsim.Vector3r(float(column[0]), float(column[1]), float(135.81))
+                airsim.Vector3r(
+                    float(column[0]), float(column[1]), float(caviar_config.pedestrian_z)
+                )
             )
     if len(caviar_config.pedestrians) > len(path_list):
         print(
@@ -376,11 +396,16 @@ def addPedestriansOnPath(client, path):
         )
     else:
         for i in range(len(caviar_config.pedestrians)):
-            client.simSetObjectPose(
-                caviar_config.pedestrians[i],
-                airsim.Pose(path_list[i + 1], airsim.to_quaternion(0, 0, 0)),
-                True,
-            )
-            client.simSetObjectScale(
-                caviar_config.pedestrians[i], airsim.Vector3r(3, 3, 3)
-            )
+            try:
+                client.simSetObjectPose(
+                    caviar_config.pedestrians[i],
+                    airsim.Pose(path_list[i + 1], airsim.to_quaternion(0, 0, 0)),
+                    True,
+                )
+                client.simSetObjectScale(
+                    caviar_config.pedestrians[i], airsim.Vector3r(3, 3, 3)
+                )
+            except Exception as error:
+                print(
+                    f"Warning: could not place pedestrian object {caviar_config.pedestrians[i]}: {error}"
+                )

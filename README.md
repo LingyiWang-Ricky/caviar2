@@ -5,6 +5,8 @@ Here you find the code described in [borges2024caviar] (see below), which allows
 
 \*Currently tested only on Ubuntu 22.04 and Python 3.9.16
 
+> Recommended mixed-OS setup: run the AirSim Unreal executable manually on **Windows** and run the remaining Python/NATS pipeline on **WSL2 Ubuntu 20.04**.
+
 ## Pre-requisites
 
 ### Auxiliary linux packages
@@ -37,34 +39,15 @@ Go to https://github.com/nats-io/nats-server/tags , download the latest `.deb` r
 
     git clone https://github.com/lasseufpa/caviar.git
 
-### 2) Set up the 3D scenario
+### 2) Set up and start the 3D scenario (Windows host)
 
-Go to the folder where the 3D executable will be stored:
+For the WSL2 workflow, keep the 3D executable on Windows and launch it manually before running `simulate.py` in WSL2.
 
-```
-cd caviar/3d
-```
+1. Download/extract the `central_park` executable on Windows (same package used in this repository).
+2. Ensure your AirSim `settings.json` on Windows includes your `Vehicles` entries (you can reuse the repository `settings.json`).
+3. Start the Unreal executable manually on Windows and wait until the map is fully loaded.
 
-Download the executable
-
-```
-curl https://nextcloud.lasseufpa.org/s/zdNNfM2YCmfrHsi/download/central_park.zip --output central_park.zip
-
-```
-
-Unzip the file
-
-```
-unzip central_park.zip
-```
-
-Set it as an executable
-
-    chmod +x ./central_park/LinuxNoEditor/central_park/Binaries/Linux/central_park-Linux-DebugGame
-
-Now, go back to the project root
-
-    cd ..
+> In this mode, `simulate.py` does **not** auto-start AirSim.
 
 ### 3) Install the requirements
 
@@ -94,11 +77,11 @@ pip install -r requirements.txt
 
 ## Executing a simulation
 
-In the project root folder, run:
+In WSL2 (Ubuntu 20.04), in the project root folder run:
 
     python3 simulate.py
 
-This will start a simulation of the flights defined in `caviar/examples/airsimTools/waypoints/trajectories/`
+This starts NATS + mobility + Sionna in WSL2 and connects to AirSim running on Windows. The flight paths are defined in `caviar/examples/airsimTools/waypoints/trajectories/`.
 
 To correctly abort a simulation, in the terminal press:
 
@@ -115,6 +98,31 @@ The configuration parameters used in the simulation are stored in `caviar/caviar
 #### On the first run, the drone was teleported to the street, but did not started to fly
 
 Sometimes this error can happen due to the download of YOLO weights. For this case, just exit the current simulation with `ctrl+c` and try it again.
+
+
+
+#### Stuck before `Episode: 0` or drone does not move
+
+If logs stop around AirSim startup/connection, check:
+
+1. AirSim is fully loaded on Windows before running `python3 simulate.py` in WSL2.
+2. Windows Firewall allows inbound TCP on AirSim RPC port (`41451` by default).
+3. `settings.json` on Windows contains the same `Vehicles` names used by `caviar_config.py` (default `uav1`).
+4. In WSL2 mode, keep `start_airsim_from_simulate = False` and confirm `airsim_host`/`airsim_port` values in `caviar_config.py`.
+
+Newer code prints both:
+- `Trying AirSim RPC ...`
+- `Connected to AirSim RPC ...`
+
+If you never see the second line, the connection itself is still failing.
+
+
+If you changed the AirSim map, also verify map-dependent settings in `caviar_config.py`:
+
+- `drone_ids` must match vehicle names in your Windows AirSim `settings.json`.
+- trajectory file (`examples/airsimTools/waypoints/trajectories/path0.csv`) should be valid for the new map coordinates/altitude.
+- `sionna_origin_offset` may need recalibration for the new PlayerStart origin.
+- if your map has no pedestrian assets with the expected names, set `enable_pedestrians = False`.
 
 #### Got the error: "Can't find libdevice directory ${CUDA_DIR}/nvvm/libdevice. This may result in compilation or runtime failures, if the program we try to run uses routines from libdevice."
 
@@ -143,3 +151,14 @@ If you benefit from this work, please cite on your publications using:
   pages={31287-31300},
   doi={10.1109/JIOT.2024.3418675}}
 ```
+
+
+## WSL2 ↔ Windows AirSim connection
+
+The connection is configured in `caviar_config.py`:
+
+- `airsim_host = "auto"` (default): resolves the Windows host IP from `/etc/resolv.conf` in WSL2.
+- `airsim_port = 41451`: AirSim RPC port.
+- `start_airsim_from_simulate = False`: keeps AirSim manual on Windows.
+
+If needed, set `airsim_host` to a fixed Windows IP address.
