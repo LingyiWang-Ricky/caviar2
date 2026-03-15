@@ -1,13 +1,13 @@
 import time
 import os
 import cv2
-import csv
 from pynats import NATSClient
 import json
 import numpy as np
 import airsim
 import caviar_tools
 import sys
+from rl_planner import build_rl_trajectory
 from PIL import Image
 import torch
 
@@ -114,15 +114,6 @@ with NATSClient() as natsclient:
     # Number of trajectories to be executed
     # Each trajectory is an episode
     n_trajectories = 1
-    current_dir = os.getcwd()
-
-    trajectories_files = os.path.join(
-        current_dir,
-        "examples",
-        "airsimTools",
-        "waypoints",
-        "trajectories",
-    )
     # Create a folder to write the UE4 simulation result
     try:
         os.mkdir("./episodes")
@@ -161,23 +152,16 @@ with NATSClient() as natsclient:
 
         isFinished = False
 
-        # Read paths
-        path_list = []
-
-        with open(
-            os.path.join(trajectories_files, "path" + str(episode) + ".csv")
-        ) as csv_file:
-            csv_reader = csv.reader(csv_file, delimiter=",")
-            csv_reader.__next__()
-            for row in csv_reader:
-                path_list.append([float(row[0]), float(row[1]), float(row[2])])
+        path_list, model_file = build_rl_trajectory(caviar_config)
+        print(
+            f"RL planner trained with {caviar_config.rl_algorithm}. Model saved at: {model_file}"
+        )
+        print(f"Generated trajectory with {len(path_list)} waypoints (no CSV required).")
 
         # Delay between episodes to avoid crashs
         time.sleep(1)
 
-        caviar_tools.addPedestriansOnPath(
-            client, os.path.join(trajectories_files, "path" + str(episode) + ".csv")
-        )
+        caviar_tools.addPedestriansOnWaypoints(client, path_list)
 
         # Reset the AirSim simulation
         caviar_tools.airsim_reset(client)
@@ -358,20 +342,7 @@ with NATSClient() as natsclient:
                                 rescue_steps = int(rescue_steps_raw) + 1
                         # No one to rescue. Must go to the next waypoint
                         else:
-                            actualWaypoint = actualWaypoint + 1
-                            caviar_tools.move_to_point(
-                                client,
-                                uav,
-                                path_list[actualWaypoint][0],
-                                path_list[actualWaypoint][1],
-                                path_list[actualWaypoint][2],
-                            )
-
-                            reached_waypoint = False
-
-                            print(actualWaypoint)
-
-                            if actualWaypoint == (len(path_list) - 4):
+                            if actualWaypoint >= (len(path_list) - 1):
                                 client.simPause(False)
                                 caviar_tools.airsim_land_all(client)
                                 isFinished = True
@@ -382,6 +353,19 @@ with NATSClient() as natsclient:
                                     + str(time.time() - initial_time)
                                     + "s"
                                 )
+                            else:
+                                actualWaypoint = actualWaypoint + 1
+                                caviar_tools.move_to_point(
+                                    client,
+                                    uav,
+                                    path_list[actualWaypoint][0],
+                                    path_list[actualWaypoint][1],
+                                    path_list[actualWaypoint][2],
+                                )
+
+                                reached_waypoint = False
+
+                                print(actualWaypoint)
                     # Continues the rescue
                     else:
                         rescue_steps = rescue_steps - 1
