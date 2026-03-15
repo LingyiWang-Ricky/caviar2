@@ -80,7 +80,7 @@ save_multimodal = False
 # - CAVIAR Python orchestration runs in WSL2 (Ubuntu)
 #
 # "auto" tries to resolve the Windows host IP from /etc/resolv.conf (WSL2 default).
-airsim_host = "auto"
+airsim_host = "172.21.32.1"
 airsim_port = 41451
 
 # Keep this as False when AirSim is started manually on Windows.
